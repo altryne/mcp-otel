@@ -15,6 +15,7 @@ import { readdirSync } from 'fs';
 import { initializeTracing, SpanStatusCode, type Span, trace, context } from './tracing.js';
 import { Context } from '@opentelemetry/api';
 import { ToolSchema } from "@modelcontextprotocol/sdk/types.js";
+import { logger } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -119,10 +120,10 @@ export class ClaudeAgent {
             client
           });
           
-          console.log(`Connected to ${serverName} server`);
+          logger.info(`Connected to ${serverName} server`);
         }
 
-        console.log("Connected to all MCP servers");
+        logger.info("Connected to all MCP servers");
         span.setStatus({ code: SpanStatusCode.OK });
       } catch (error) {
         span.setStatus({

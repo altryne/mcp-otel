@@ -5,6 +5,8 @@ import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentation
 import { trace, Span, context, SpanStatusCode, Tracer } from '@opentelemetry/api';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import * as dotenv from 'dotenv';
+import { logger } from './logger.js';
+import { DEBUG } from './config.js';
 
 // Load environment variables from .local.env
 dotenv.config({ path: '.local.env' });
@@ -21,17 +23,17 @@ export async function initializeTracing(serviceName: string, version: string): P
   // Configure headers for Weave if W&B credentials are provided
   const headers: Record<string, string> = {};
   
-  console.log('WANDB_API_KEY:', process.env.WANDB_API_KEY ? 'SET' : 'NOT SET');
-  console.log('WANDB_PROJECT_ID:', process.env.WANDB_PROJECT_ID);
+  logger.debug('WANDB_API_KEY:', process.env.WANDB_API_KEY ? 'SET' : 'NOT SET');
+  logger.debug('WANDB_PROJECT_ID:', process.env.WANDB_PROJECT_ID);
   
   if (process.env.WANDB_API_KEY && process.env.WANDB_PROJECT_ID) {
     // Base64 encode the API key for Basic auth
     const encodedApiKey = Buffer.from(`api:${process.env.WANDB_API_KEY}`).toString('base64');
     headers['Authorization'] = `Basic ${encodedApiKey}`;
     headers['project_id'] = process.env.WANDB_PROJECT_ID;
-    console.log('Weave headers configured:', { project_id: headers['project_id'] });
+    logger.debug('Weave headers configured:', { project_id: headers['project_id'] });
   } else {
-    console.log('Weave headers NOT configured - missing API key or project ID');
+    logger.debug('Weave headers NOT configured - missing API key or project ID');
   }
 
   const otlpExporter = new OTLPTraceExporter({
@@ -39,17 +41,20 @@ export async function initializeTracing(serviceName: string, version: string): P
     headers: headers,
   });
 
-  // Add console exporter to debug
-  const { ConsoleSpanExporter } = await import('@opentelemetry/sdk-trace-base');
-  const consoleExporter = new ConsoleSpanExporter();
+  const spanProcessors = [new SimpleSpanProcessor(otlpExporter)];
 
-  const spanProcessor = new SimpleSpanProcessor(otlpExporter);
-  const consoleProcessor = new SimpleSpanProcessor(consoleExporter);
+  // Only add console exporter if DEBUG is enabled
+  if (DEBUG) {
+    const { ConsoleSpanExporter } = await import('@opentelemetry/sdk-trace-base');
+    const consoleExporter = new ConsoleSpanExporter();
+    spanProcessors.push(new SimpleSpanProcessor(consoleExporter));
+    logger.debug('Console span exporter enabled');
+  }
 
   const sdk = new NodeSDK({
     serviceName: serviceName,
     autoDetectResources: false,
-    spanProcessors: [spanProcessor, consoleProcessor],
+    spanProcessors: spanProcessors,
     instrumentations: [getNodeAutoInstrumentations()]
   });
 
@@ -57,18 +62,18 @@ export async function initializeTracing(serviceName: string, version: string): P
     sdk.start();
     const hasWeaveHeaders = process.env.WANDB_API_KEY && process.env.WANDB_PROJECT_ID;
     const weaveInfo = hasWeaveHeaders ? ' (with Weave headers)' : '';
-    console.error(`OpenTelemetry SDK initialized for ${serviceName} - sending traces to ${OTLP_ENDPOINT}${weaveInfo}`);
+    logger.server(`OpenTelemetry SDK initialized for ${serviceName} - sending traces to ${OTLP_ENDPOINT}${weaveInfo}`);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Error initializing OpenTelemetry:', errorMessage);
+    logger.error('Error initializing OpenTelemetry:', errorMessage);
   }
 
   process.on('SIGTERM', () => {
     sdk.shutdown()
-      .then(() => console.error('SDK shut down successfully'))
+      .then(() => logger.server('SDK shut down successfully'))
       .catch((error: unknown) => {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error('Error shutting down SDK:', errorMessage);
+        logger.error('Error shutting down SDK:', errorMessage);
       })
       .finally(() => process.exit(0));
   });
